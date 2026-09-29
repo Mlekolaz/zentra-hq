@@ -1,0 +1,29 @@
+{
+  "name": "@zentra/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@zentra/connectors": "workspace:*",
+    "@zentra/database": "workspace:*",
+    "@zentra/domain": "workspace:*",
+    "@zentra/events": "workspace:*",
+    "@zentra/observability": "workspace:*",
+    "@zentra/shared": "workspace:*",
+    "dotenv": "^17.2.2",
+    "pg": "^8.16.3",
+    "pino": "^9.9.4",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.5"
+  }
+}
