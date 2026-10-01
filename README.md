@@ -10,9 +10,10 @@ M0 establishes the testable spine of the system:
 
 - React command-center shell with live Overview, Events, and Integrations views;
 - Fastify ingestion and read API;
-- immutable raw-event storage and canonical-event storage;
+- append-only raw-event storage and deduplicated canonical-event storage;
 - race-safe idempotency by explicit key and provider identity;
-- queue port with in-memory and Postgres adapters;
+- atomic Postgres ingestion, duplicate recovery, and a reconciliation safety net;
+- fenced, bounded queue delivery with in-memory and Postgres adapters;
 - separate worker entrypoint plus an explicit embedded development worker;
 - Mock Connector normalization;
 - bounded retry, processing history, dead letters, audit entries, and health reporting;
@@ -36,7 +37,7 @@ Fastify ingestion API -- verify exact raw body
 Immutable raw_events  <---- durable source of truth
       |
       v
-Queue (rawEventId + traceId + attempt only)
+Queue (rawEventId + traceId; DB-owned delivery count and lease)
       |
       v
 Worker -> Connector registry -> Canonical validation
@@ -48,7 +49,7 @@ Worker -> Connector registry -> Canonical validation
                         audit + read API + UI
 ```
 
-The queue is work transport, never the event store. In Postgres mode, the API and worker are separate processes. In the default, explicitly non-production in-memory mode, the API runs a background worker in the same process so a no-account local demo remains useful; the standalone worker refuses to start without Postgres.
+The queue is work transport, never the event store. In Postgres mode, raw insertion, queue dispatch, and the ingestion audit commit in one transaction. In the default, explicitly non-production in-memory mode, the API runs a background worker in the same process so a no-account local demo remains useful; the standalone worker refuses to start without Postgres.
 
 See [Architecture Overview](docs/architecture/OVERVIEW.md) and [Event Flow](docs/architecture/EVENT_FLOW.md).
 
@@ -130,9 +131,16 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm format:check
 ```
 
-Tests use dependency injection and do not need Postgres, Supabase, or an external provider.
+Unit tests use dependency injection and do not need Postgres, Supabase, or an external provider. PostgreSQL invariants have a separate real-database suite:
+
+```bash
+TEST_DATABASE_URL=postgresql://... pnpm test:integration:postgres
+```
+
+The integration command intentionally fails with a clear message when `TEST_DATABASE_URL` is absent; it never reports a skipped database suite as passed. Use an isolated test database because the suite creates and drops its own `zentra_m0_1_integration` schema.
 
 ## Manual event flow demo
 
@@ -158,8 +166,8 @@ In-memory state is intentionally lost when the API restarts and must never be tr
 
 1. Implement `Connector` without leaking provider types into domain code.
 2. Declare only real capabilities and implement meaningful health/disabled states.
-3. Implement provider-specific exact-byte webhook verification separately.
-4. Preserve provider IDs and normalize into versioned, validated semantic facts.
+3. Implement provider-specific exact-byte webhook verification and register it by a trusted route source.
+4. Preserve provider IDs and normalize into versioned, validated semantic facts with a stable `deduplicationKey` and the shared canonical-ID helper.
 5. Register the connector in the composition root and add contract, retry, and idempotency tests.
 
 See [Connector Conventions](docs/connectors/README.md).
@@ -184,5 +192,4 @@ See [Trust Boundaries](docs/security/TRUST_BOUNDARIES.md).
 - no production webhook verifier exists, so production startup intentionally fails closed;
 - in-memory mode is process-local and ephemeral;
 - Postgres mode uses a simple M0 polling queue, not PGMQ;
-- queue enqueue is not an outbox transaction with raw insertion; a persisted raw event remains recoverable if enqueue fails, and production hardening should add a transactional dispatch marker/reconciler;
 - no action executor, AI runtime, real connector, entity resolution, attention engine, CRM, task engine, or search exists.

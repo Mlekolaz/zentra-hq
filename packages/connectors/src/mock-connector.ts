@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
 import { PermanentProcessingError } from "@zentra/domain";
 import type { RawEvent } from "@zentra/domain";
-import { parseCanonicalEvent } from "@zentra/events";
+import { createCanonicalEventId, parseCanonicalEvent } from "@zentra/events";
 import type { CanonicalEvent } from "@zentra/events";
 import { z } from "zod";
 import type {
@@ -19,16 +18,6 @@ const mockPayloadSchema = z.object({
   }),
   text: z.string().min(1),
 });
-
-const deterministicUuid = (value: string): string => {
-  const bytes = Buffer.from(
-    createHash("sha256").update(value).digest().subarray(0, 16),
-  );
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
-  const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-};
 
 export class MockConnector implements Connector {
   public readonly provider = "mock";
@@ -68,12 +57,12 @@ export class MockConnector implements Connector {
       );
     }
     const occurredAt = rawEvent.occurredAt ?? rawEvent.receivedAt;
+    const deduplicationKey = `message:${payload.data.messageId}`;
     return [
       parseCanonicalEvent({
-        id: deterministicUuid(
-          `${rawEvent.id}:communication.message_received:1`,
-        ),
+        id: createCanonicalEventId(rawEvent.id, deduplicationKey, 1),
         rawEventId: rawEvent.id,
+        deduplicationKey,
         type: "communication.message_received",
         schemaVersion: 1,
         source: rawEvent.source,

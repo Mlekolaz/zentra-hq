@@ -15,6 +15,7 @@
     "lint": "eslint . --max-warnings 0",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
+    "test:integration:postgres": "vitest run --config vitest.postgres.config.ts",
     "build": "pnpm -r --if-present build",
     "format:check": "prettier --check ."
   },

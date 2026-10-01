@@ -28,7 +28,8 @@ export const buildApp = async (config: AppConfig, kernel: Kernel) => {
     methods: ["GET", "POST"],
   });
 
-  // Provider signatures require the exact request bytes, so the parser preserves them before JSON validation.
+  // Provider signatures require the exact request bytes. Routes decide when to
+  // parse them so future production webhooks can verify before parsing.
   app.removeContentTypeParser("application/json");
   app.addContentTypeParser(
     "application/json",
@@ -36,15 +37,7 @@ export const buildApp = async (config: AppConfig, kernel: Kernel) => {
     (request, body, done) => {
       const buffer = Buffer.isBuffer(body) ? body : Buffer.from(body);
       request.rawBody = buffer;
-      try {
-        done(null, JSON.parse(buffer.toString("utf8")) as unknown);
-      } catch (error: unknown) {
-        done(
-          new ValidationError("Request body contains malformed JSON", {
-            cause: error,
-          }),
-        );
-      }
+      done(null, buffer);
     },
   );
 
@@ -53,11 +46,7 @@ export const buildApp = async (config: AppConfig, kernel: Kernel) => {
     reply.header("x-trace-id", request.id);
   });
 
-  const ingestion = new IngestionService(
-    kernel.repository,
-    kernel.queue,
-    kernel.verifier,
-  );
+  const ingestion = new IngestionService(kernel.ingestion, kernel.verifiers);
 
   app.get("/health", async () => {
     const [storageReady, queueDepth] = await Promise.all([
@@ -98,26 +87,40 @@ export const buildApp = async (config: AppConfig, kernel: Kernel) => {
     ),
   }));
 
-  app.post("/v1/events/ingest", async (request, reply) => {
-    const parsed = ingestionRequestSchema.safeParse(request.body);
-    if (!parsed.success) {
-      throw new ValidationError("Ingestion request is malformed", {
-        details: {
-          issues: parsed.error.issues.map((issue) => ({
-            path: issue.path.join("."),
-            code: issue.code,
-          })),
-        },
+  if (config.NODE_ENV !== "production") {
+    app.post("/v1/events/ingest", async (request, reply) => {
+      let body: unknown;
+      try {
+        body = JSON.parse(request.rawBody.toString("utf8")) as unknown;
+      } catch (error: unknown) {
+        throw new ValidationError("Request body contains malformed JSON", {
+          cause: error,
+        });
+      }
+      const parsed = ingestionRequestSchema.safeParse(body);
+      if (!parsed.success) {
+        throw new ValidationError("Ingestion request is malformed", {
+          details: {
+            issues: parsed.error.issues.map((issue) => ({
+              path: issue.path.join("."),
+              code: issue.code,
+            })),
+          },
+        });
+      }
+      const result = await ingestion.ingest({
+        // This endpoint is development-only. Production provider routes must
+        // derive this value from trusted route configuration and verify the raw
+        // bytes before parsing a provider payload.
+        trustedSource: parsed.data.source,
+        request: parsed.data,
+        headers: request.headers,
+        rawBody: request.rawBody,
+        traceId: request.id,
       });
-    }
-    const result = await ingestion.ingest({
-      request: parsed.data,
-      headers: request.headers,
-      rawBody: request.rawBody,
-      traceId: request.id,
+      return reply.code(202).send(result);
     });
-    return reply.code(202).send(result);
-  });
+  }
 
   app.setErrorHandler((error, request, reply) => {
     const frameworkStatus = clientStatusFrom(error);

@@ -16,6 +16,27 @@ export type RawEventInsertResult = {
   duplicateReason: "idempotency_key" | "provider_identity" | null;
 };
 
+export type QueueDisposition =
+  | "enqueued"
+  | "recovered"
+  | "already_queued"
+  | "already_processed"
+  | "permanently_failed";
+
+export type AtomicIngestionResult = RawEventInsertResult & {
+  queueDisposition: QueueDisposition;
+};
+
+export type ReconcileOptions = {
+  olderThanMs: number;
+  limit: number;
+};
+
+export interface EventIngestionPort {
+  ingestEventAtomically(input: NewRawEvent): Promise<AtomicIngestionResult>;
+  reconcileUndispatchedRawEvents(options: ReconcileOptions): Promise<number>;
+}
+
 export type NewProcessingRun = {
   rawEventId: RawEventId;
   processorName: string;

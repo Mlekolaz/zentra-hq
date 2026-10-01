@@ -59,7 +59,7 @@ export class InMemoryEventRepository implements EventRepository {
                 event.idempotencyKey === input.idempotencyKey,
             );
       const providerMatch =
-        input.sourceAccountId === null || input.externalEventId === null
+        input.externalEventId === null
           ? undefined
           : events.find(
               (event) =>
@@ -101,7 +101,12 @@ export class InMemoryEventRepository implements EventRepository {
     event: CanonicalEvent,
   ): Promise<{ created: boolean }> {
     return this.#mutex.run(() => {
-      const duplicate = this.#canonicalEvents.has(event.id);
+      const duplicate = [...this.#canonicalEvents.values()].some(
+        (existing) =>
+          existing.id === event.id ||
+          (existing.rawEventId === event.rawEventId &&
+            existing.deduplicationKey === event.deduplicationKey),
+      );
       if (duplicate) return { created: false };
       this.#canonicalEvents.set(event.id, copy(event));
       return { created: true };

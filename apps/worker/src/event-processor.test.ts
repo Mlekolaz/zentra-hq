@@ -7,8 +7,8 @@ import type {
 import { InMemoryEventRepository } from "@zentra/database";
 import { newTraceId, RetryableProcessingError } from "@zentra/domain";
 import type { RawEvent } from "@zentra/domain";
-import { InMemoryQueue } from "@zentra/events";
-import type { CanonicalEvent, RawEventQueueMessage } from "@zentra/events";
+import { InMemoryRawEventQueue } from "@zentra/events";
+import type { CanonicalEvent } from "@zentra/events";
 import { createLogger } from "@zentra/observability";
 import { describe, expect, it } from "vitest";
 import { EventProcessor } from "./event-processor.js";
@@ -48,7 +48,7 @@ const setup = async (
   maxAttempts = 3,
 ) => {
   const repository = new InMemoryEventRepository();
-  const queue = new InMemoryQueue<RawEventQueueMessage>();
+  const queue = new InMemoryRawEventQueue();
   const traceId = newTraceId();
   const inserted = await repository.insertRawEvent({
     source: "mock",
@@ -70,7 +70,6 @@ const setup = async (
   await queue.enqueue({
     rawEventId: inserted.rawEvent.id,
     traceId,
-    attempt: 1,
   });
   const processor = new EventProcessor(
     repository,
@@ -143,11 +142,10 @@ describe("EventProcessor", () => {
       ...raw,
       payload: raw.payload,
     });
-    const invalidQueue = new InMemoryQueue<RawEventQueueMessage>();
+    const invalidQueue = new InMemoryRawEventQueue();
     await invalidQueue.enqueue({
       rawEventId: inserted.rawEvent.id,
       traceId: raw.traceId,
-      attempt: 1,
     });
     const invalidProcessor = new EventProcessor(
       invalidRepository,
@@ -182,7 +180,7 @@ describe("EventProcessor", () => {
   it("does not duplicate a canonical event when processing the same raw event twice", async () => {
     const { processor, repository, queue, rawEvent, traceId } = await setup();
     await processor.processNext();
-    await queue.enqueue({ rawEventId: rawEvent.id, traceId, attempt: 2 });
+    await queue.enqueue({ rawEventId: rawEvent.id, traceId });
     await processor.processNext();
     expect(repository.snapshot().canonicalEvents).toHaveLength(1);
     expect(repository.snapshot().processingRuns).toHaveLength(2);

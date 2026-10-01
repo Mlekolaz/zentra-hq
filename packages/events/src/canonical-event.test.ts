@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canonicalEventSchema,
+  createCanonicalEventId,
   parseCanonicalEvent,
   validateCanonicalEvent,
 } from "./canonical-event.js";
@@ -8,6 +9,7 @@ import {
 const validEvent = () => ({
   id: "10000000-0000-4000-8000-000000000001",
   rawEventId: "10000000-0000-4000-8000-000000000002",
+  deduplicationKey: "message:message-1",
   type: "communication.message_received",
   schemaVersion: 1,
   source: "mock",
@@ -49,5 +51,23 @@ describe("CanonicalEvent", () => {
     expect(() =>
       parseCanonicalEvent({ ...validEvent(), schemaVersion: 2 }),
     ).toThrow("Canonical event schema version is unsupported");
+  });
+
+  it("derives a stable canonical ID from raw identity and deduplication key", () => {
+    const first = createCanonicalEventId(
+      validEvent().rawEventId,
+      validEvent().deduplicationKey,
+      1,
+    );
+    expect(first).toBe(
+      createCanonicalEventId(
+        validEvent().rawEventId,
+        validEvent().deduplicationKey,
+        1,
+      ),
+    );
+    expect(first).not.toBe(
+      createCanonicalEventId(validEvent().rawEventId, "message:other", 1),
+    );
   });
 });

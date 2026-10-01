@@ -7,7 +7,7 @@ A connector translates provider facts into canonical facts and reports only capa
 - verify source-specific webhook signatures against exact raw bytes through a separate verifier;
 - preserve external event, account, message, and object IDs;
 - normalize into supported versioned schemas;
-- derive stable canonical event IDs so replay writes the same facts, including when one raw batch produces multiple facts of the same type;
+- assign a stable `deduplicationKey` to every normalized item and derive its ID with `createCanonicalEventId(rawEventId, deduplicationKey, schemaVersion)`; connectors must not implement their own hashing algorithm;
 - declare capabilities rather than assuming symmetry across providers;
 - report `CONNECTED`, `DEGRADED`, `RATE_LIMITED`, `AUTH_EXPIRED`, `DISCONNECTED`, or `DISABLED`;
 - expose a kill switch/disabled state;

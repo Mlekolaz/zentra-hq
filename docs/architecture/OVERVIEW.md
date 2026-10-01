@@ -12,7 +12,7 @@ M0 proves one complete path from an untrusted source to an immutable canonical f
 - `database` implements event repositories and transport adapters behind ports.
 - `worker` orchestrates normalization, retries, dead letters, and processing audit.
 - `policy` deterministically classifies action risk and creates approval requests.
-- `api` validates untrusted input, verifies webhooks, persists raw events, and enqueues IDs.
+- `api` selects webhook verification from trusted routing context and delegates atomic persistence/dispatch behind an ingestion port.
 - `web` consumes read APIs only and has no privileged database access.
 
 Dependencies point inward toward contracts. Provider implementations do not enter domain or policy code.
@@ -25,9 +25,11 @@ Dependencies point inward toward contracts. Provider implementations do not ente
 
 ## Data invariants
 
-- Raw rows are inserted once; a database trigger rejects updates.
-- Provider identity and explicit keys have independent unique indexes.
-- Canonical events are validated and protected by connector-generated deterministic IDs plus the primary-key constraint. A single raw batch may legitimately produce several facts of the same type.
+- Raw rows are inserted once; a database trigger rejects updates and deletes.
+- Provider identity and explicit keys have independent unique indexes, including provider identity with a null account scope.
+- Canonical events are validated and protected by deterministic IDs plus unique `(raw_event_id, deduplication_key)`. A single raw batch may legitimately produce several facts of the same type.
+- Postgres ingestion commits the raw fact, one queue row, and audit evidence atomically.
+- Queue delivery count and fencing tokens are database-owned; stale workers cannot ACK or retry a newer lease.
 - Every worker execution creates a processing history row; mutable status never touches raw facts.
 - Failures contain stable codes and safe messages, not provider payloads.
 - Every important operation carries a UUID trace ID.

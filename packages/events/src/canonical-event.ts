@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { ValidationError } from "@zentra/domain";
 import { z } from "zod";
 
@@ -20,6 +21,7 @@ export type EntityReference = z.infer<typeof entityReferenceSchema>;
 export const canonicalEventSchema = z.object({
   id: z.uuid(),
   rawEventId: z.uuid(),
+  deduplicationKey: z.string().min(1).max(500),
   type: eventTypeSchema,
   schemaVersion: z.number().int().positive(),
   source: z.string().min(1).max(100),
@@ -49,6 +51,26 @@ export type CanonicalEvent<
 };
 
 export const supportedCanonicalSchemaVersions = new Set([1]);
+
+export const createCanonicalEventId = (
+  rawEventId: string,
+  deduplicationKey: string,
+  schemaVersion: number,
+): string => {
+  const parsedRawEventId = z.uuid().parse(rawEventId);
+  const parsedKey = z.string().min(1).max(500).parse(deduplicationKey);
+  const parsedVersion = z.number().int().positive().parse(schemaVersion);
+  const bytes = Buffer.from(
+    createHash("sha256")
+      .update(`${parsedRawEventId}\0${parsedKey}\0${parsedVersion}`)
+      .digest()
+      .subarray(0, 16),
+  );
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+};
 
 export const parseCanonicalEvent = (
   input: unknown,

@@ -99,6 +99,16 @@ export class ConfigurationError extends AppError {
   }
 }
 
+export class ConsistencyError extends AppError {
+  public constructor(
+    code = "CONSISTENCY_ERROR",
+    message = "Internal data consistency check failed",
+    options?: ErrorOptions,
+  ) {
+    super(code, message, false, options);
+  }
+}
+
 export const toAppError = (error: unknown): AppError => {
   if (error instanceof AppError) return error;
   return new RetryableProcessingError(

@@ -2,17 +2,19 @@ import {
   ConnectorRegistry,
   DevelopmentWebhookVerifier,
   MockConnector,
-  type WebhookVerifier,
+  WebhookVerifierRegistry,
 } from "@zentra/connectors";
 import {
+  InMemoryEventIngestion,
   InMemoryEventRepository,
   PostgresEventRepository,
   PostgresQueue,
+  type EventIngestionPort,
   type EventRepository,
 } from "@zentra/database";
 import { ConfigurationError } from "@zentra/domain";
-import { InMemoryQueue } from "@zentra/events";
-import type { QueuePort, RawEventQueueMessage } from "@zentra/events";
+import { InMemoryRawEventQueue } from "@zentra/events";
+import type { RawEventQueuePort } from "@zentra/events";
 import { createLogger } from "@zentra/observability";
 import type { AppConfig } from "@zentra/shared";
 import { DevelopmentIdentityProvider } from "@zentra/shared";
@@ -22,19 +24,13 @@ import {
   WorkerRuntime,
 } from "@zentra/worker";
 import pg from "pg";
-import { z } from "zod";
-
-const queueMessageSchema = z.object({
-  rawEventId: z.uuid(),
-  traceId: z.uuid(),
-  attempt: z.number().int().positive(),
-});
 
 export type Kernel = {
   repository: EventRepository;
-  queue: QueuePort<RawEventQueueMessage>;
+  ingestion: EventIngestionPort;
+  queue: RawEventQueuePort;
   connectors: ConnectorRegistry;
-  verifier: WebhookVerifier;
+  verifiers: WebhookVerifierRegistry;
   identityProvider: DevelopmentIdentityProvider;
   workerRuntime: WorkerRuntime | null;
   logger: ReturnType<typeof createLogger>;
@@ -56,9 +52,11 @@ export const createKernel = (config: AppConfig): Kernel => {
     config.WEBHOOK_DEV_SECRET,
     config.NODE_ENV,
   );
+  const verifiers = new WebhookVerifierRegistry([{ source: "mock", verifier }]);
   const identityProvider = new DevelopmentIdentityProvider(config.NODE_ENV);
   let repository: EventRepository;
-  let queue: QueuePort<RawEventQueueMessage>;
+  let ingestion: EventIngestionPort;
+  let queue: RawEventQueuePort;
   let closeStorage = async (): Promise<void> => undefined;
 
   if (config.RUNTIME_MODE === "postgres") {
@@ -68,12 +66,21 @@ export const createKernel = (config: AppConfig): Kernel => {
       connectionString: config.DATABASE_URL,
       max: 10,
     });
-    repository = new PostgresEventRepository(pool);
-    queue = new PostgresQueue(pool, (input) => queueMessageSchema.parse(input));
+    const postgresRepository = new PostgresEventRepository(pool);
+    repository = postgresRepository;
+    ingestion = postgresRepository;
+    queue = new PostgresQueue(pool, {
+      leaseTimeoutMs: 5 * 60_000,
+      maxDeliveries: config.WORKER_MAX_ATTEMPTS,
+      processorName: "canonical-normalizer",
+    });
     closeStorage = async () => pool.end();
   } else {
-    repository = new InMemoryEventRepository();
-    queue = new InMemoryQueue();
+    const inMemoryRepository = new InMemoryEventRepository();
+    repository = inMemoryRepository;
+    const inMemoryQueue = new InMemoryRawEventQueue();
+    queue = inMemoryQueue;
+    ingestion = new InMemoryEventIngestion(inMemoryRepository, inMemoryQueue);
   }
 
   const workerRuntime = config.EMBEDDED_WORKER
@@ -92,14 +99,16 @@ export const createKernel = (config: AppConfig): Kernel => {
         ),
         logger,
         config.WORKER_POLL_MS,
+        ingestion,
       )
     : null;
 
   return {
     repository,
+    ingestion,
     queue,
     connectors,
-    verifier,
+    verifiers,
     identityProvider,
     workerRuntime,
     logger,

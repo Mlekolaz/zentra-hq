@@ -4,18 +4,25 @@ import type {
   ProcessingRun,
   RawEvent,
 } from "@zentra/domain";
-import { rawEventSchema, ValidationError } from "@zentra/domain";
+import {
+  ConsistencyError,
+  rawEventSchema,
+  ValidationError,
+} from "@zentra/domain";
 import type { CanonicalEvent } from "@zentra/events";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { z } from "zod";
 import type {
   EventListItem,
+  AtomicIngestionResult,
+  EventIngestionPort,
   EventRepository,
   NewProcessingRun,
   NewRawEvent,
   OverviewSnapshot,
   ProcessingFailure,
   RawEventInsertResult,
+  ReconcileOptions,
 } from "./repository.js";
 
 const dateValueSchema = z
@@ -97,13 +104,24 @@ const parseProcessingRun = (row: unknown): ProcessingRun => {
 type UnknownRow = Record<string, unknown>;
 const firstRow = (rows: readonly UnknownRow[]): unknown => rows[0];
 
-export class PostgresEventRepository implements EventRepository {
+type Queryable = Pool | PoolClient;
+
+export class PostgresEventRepository
+  implements EventRepository, EventIngestionPort
+{
   public constructor(private readonly pool: Pool) {}
 
   public async insertRawEvent(
     input: NewRawEvent,
   ): Promise<RawEventInsertResult> {
-    const inserted = await this.pool.query<UnknownRow>(
+    return this.#insertRawEvent(this.pool, input);
+  }
+
+  async #insertRawEvent(
+    database: Queryable,
+    input: NewRawEvent,
+  ): Promise<RawEventInsertResult> {
+    const inserted = await database.query<UnknownRow>(
       `INSERT INTO raw_events (
         source, source_account_id, event_type_hint, external_event_id, idempotency_key,
         payload, sanitized_headers, occurred_at, received_at, trace_id
@@ -130,16 +148,28 @@ export class PostgresEventRepository implements EventRepository {
       };
     }
 
-    const existing = await this.pool.query<UnknownRow>(
+    const existing = await database.query<UnknownRow>(
       `SELECT *,
-         ($3::text IS NOT NULL AND idempotency_key = $3) AS explicit_match,
-         ($2::text IS NOT NULL AND $4::text IS NOT NULL AND external_event_id = $4) AS provider_match
+         COALESCE(
+           $3::text IS NOT NULL AND idempotency_key = $3::text,
+           false
+         ) AS explicit_match,
+         COALESCE(
+           $4::text IS NOT NULL AND external_event_id = $4::text,
+           false
+         ) AS provider_match
        FROM raw_events
-       WHERE source = $1
-         AND COALESCE(source_account_id, '') = COALESCE($2, '')
+       WHERE source = $1::text
+         AND COALESCE(source_account_id, '') = COALESCE($2::text, '')
          AND (
-           ($3::text IS NOT NULL AND idempotency_key = $3)
-           OR ($2::text IS NOT NULL AND $4::text IS NOT NULL AND external_event_id = $4)
+           COALESCE(
+             $3::text IS NOT NULL AND idempotency_key = $3::text,
+             false
+           )
+           OR COALESCE(
+             $4::text IS NOT NULL AND external_event_id = $4::text,
+             false
+           )
        )
        ORDER BY created_at ASC`,
       [
@@ -174,7 +204,8 @@ export class PostgresEventRepository implements EventRepository {
     }
     const rawEvent = explicitMatch ?? providerMatch;
     if (rawEvent === undefined) {
-      throw new ValidationError(
+      throw new ConsistencyError(
+        "CONFLICT_RESOLUTION_FAILED",
         "Conflicting event could not be resolved safely",
       );
     }
@@ -184,6 +215,157 @@ export class PostgresEventRepository implements EventRepository {
       duplicateReason:
         explicitMatch !== undefined ? "idempotency_key" : "provider_identity",
     };
+  }
+
+  public async ingestEventAtomically(
+    input: NewRawEvent,
+  ): Promise<AtomicIngestionResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const inserted = await this.#insertRawEvent(client, input);
+      let queueDisposition: AtomicIngestionResult["queueDisposition"];
+      if (inserted.created) {
+        await client.query(
+          `INSERT INTO event_queue (raw_event_id, payload, available_at)
+           VALUES ($1, $2::jsonb, now())`,
+          [
+            inserted.rawEvent.id,
+            JSON.stringify({
+              rawEventId: inserted.rawEvent.id,
+              traceId: inserted.rawEvent.traceId,
+            }),
+          ],
+        );
+        queueDisposition = "enqueued";
+      } else {
+        const state = await client.query<UnknownRow>(
+          `SELECT
+             EXISTS (SELECT 1 FROM events WHERE raw_event_id = $1) AS has_canonical,
+             EXISTS (
+               SELECT 1 FROM processing_runs
+               WHERE raw_event_id = $1 AND status = 'succeeded'
+             ) AS has_success,
+             EXISTS (SELECT 1 FROM dead_letters WHERE raw_event_id = $1) AS has_dead_letter,
+             EXISTS (SELECT 1 FROM event_queue WHERE raw_event_id = $1) AS has_queue_item`,
+          [inserted.rawEvent.id],
+        );
+        const parsedState = z
+          .object({
+            has_canonical: z.boolean(),
+            has_success: z.boolean(),
+            has_dead_letter: z.boolean(),
+            has_queue_item: z.boolean(),
+          })
+          .parse(firstRow(state.rows));
+        if (parsedState.has_canonical || parsedState.has_success) {
+          queueDisposition = "already_processed";
+        } else if (parsedState.has_dead_letter) {
+          queueDisposition = "permanently_failed";
+        } else if (parsedState.has_queue_item) {
+          queueDisposition = "already_queued";
+        } else {
+          const recovered = await client.query(
+            `INSERT INTO event_queue (raw_event_id, payload, available_at)
+             VALUES ($1, $2::jsonb, now())
+             ON CONFLICT (raw_event_id) DO NOTHING`,
+            [
+              inserted.rawEvent.id,
+              JSON.stringify({
+                rawEventId: inserted.rawEvent.id,
+                traceId: inserted.rawEvent.traceId,
+              }),
+            ],
+          );
+          queueDisposition =
+            recovered.rowCount === 1 ? "recovered" : "already_queued";
+        }
+      }
+
+      await client.query(
+        `INSERT INTO audit_entries (
+           actor_type, actor_id, action, target_type, target_id, metadata, trace_id
+         ) VALUES ('connector', $1, $2, 'raw_event', $3, $4::jsonb, $5)`,
+        [
+          input.source,
+          inserted.created
+            ? "ingestion.accepted"
+            : "ingestion.duplicate_detected",
+          inserted.rawEvent.id,
+          JSON.stringify({
+            source: input.source,
+            duplicateReason: inserted.duplicateReason,
+            queueDisposition,
+          }),
+          input.traceId,
+        ],
+      );
+      await client.query("COMMIT");
+      return { ...inserted, queueDisposition };
+    } catch (error: unknown) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  public async reconcileUndispatchedRawEvents(
+    options: ReconcileOptions,
+  ): Promise<number> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const recovered = await client.query<UnknownRow>(
+        `WITH candidates AS (
+           SELECT r.id, r.trace_id
+           FROM raw_events r
+           WHERE r.created_at < now() - ($1::text || ' milliseconds')::interval
+             AND NOT EXISTS (SELECT 1 FROM events e WHERE e.raw_event_id = r.id)
+             AND NOT EXISTS (
+               SELECT 1 FROM processing_runs pr
+               WHERE pr.raw_event_id = r.id AND pr.status = 'succeeded'
+             )
+             AND NOT EXISTS (SELECT 1 FROM dead_letters d WHERE d.raw_event_id = r.id)
+             AND NOT EXISTS (SELECT 1 FROM event_queue q WHERE q.raw_event_id = r.id)
+           ORDER BY r.created_at ASC
+           FOR UPDATE OF r SKIP LOCKED
+           LIMIT $2
+         ), inserted AS (
+           INSERT INTO event_queue (raw_event_id, payload, available_at)
+           SELECT id, jsonb_build_object('rawEventId', id, 'traceId', trace_id), now()
+           FROM candidates
+           ON CONFLICT (raw_event_id) DO NOTHING
+           RETURNING raw_event_id
+         )
+         SELECT i.raw_event_id, r.trace_id
+         FROM inserted i
+         JOIN raw_events r ON r.id = i.raw_event_id`,
+        [
+          Math.max(0, options.olderThanMs),
+          Math.min(Math.max(options.limit, 1), 1000),
+        ],
+      );
+      for (const candidate of recovered.rows) {
+        const row = z
+          .object({ raw_event_id: z.string(), trace_id: z.string() })
+          .parse(candidate);
+        await client.query(
+          `INSERT INTO audit_entries (
+             actor_type, actor_id, action, target_type, target_id, metadata, trace_id
+           ) VALUES ('system', 'raw-event-reconciler', 'ingestion.queue_recovered',
+             'raw_event', $1, '{}'::jsonb, $2)`,
+          [row.raw_event_id, row.trace_id],
+        );
+      }
+      await client.query("COMMIT");
+      return recovered.rowCount ?? 0;
+    } catch (error: unknown) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   public async findRawEvent(id: string): Promise<RawEvent | null> {
@@ -201,14 +383,15 @@ export class PostgresEventRepository implements EventRepository {
   ): Promise<{ created: boolean }> {
     const result = await this.pool.query<UnknownRow>(
       `INSERT INTO events (
-        id, raw_event_id, type, schema_version, source, source_account_id, external_event_id,
+        id, raw_event_id, deduplication_key, type, schema_version, source, source_account_id, external_event_id,
         occurred_at, received_at, actor, subject, entity_refs, payload, metadata,
         correlation_id, causation_id, trace_id
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14::jsonb,$15,$16,$17)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13::jsonb,$14::jsonb,$15::jsonb,$16,$17,$18)
       ON CONFLICT DO NOTHING RETURNING id`,
       [
         event.id,
         event.rawEventId,
+        event.deduplicationKey,
         event.type,
         event.schemaVersion,
         event.source,

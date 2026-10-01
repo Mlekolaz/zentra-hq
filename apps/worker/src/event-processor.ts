@@ -1,7 +1,7 @@
 import type { ConnectorRegistry } from "@zentra/connectors";
 import type { EventRepository } from "@zentra/database";
 import { PermanentProcessingError, toAppError } from "@zentra/domain";
-import type { QueuePort, RawEventQueueMessage } from "@zentra/events";
+import type { RawEventQueuePort } from "@zentra/events";
 import { parseCanonicalEvent } from "@zentra/events";
 import { safeErrorSummary } from "@zentra/observability";
 import type { Logger } from "pino";
@@ -16,7 +16,7 @@ export type EventProcessorOptions = {
 export class EventProcessor {
   public constructor(
     private readonly repository: EventRepository,
-    private readonly queue: QueuePort<RawEventQueueMessage>,
+    private readonly queue: RawEventQueuePort,
     private readonly connectors: ConnectorRegistry,
     private readonly retryPolicy: RetryPolicy,
     private readonly logger: Logger,
@@ -27,10 +27,14 @@ export class EventProcessor {
     const delivery = await this.queue.receive();
     if (delivery === null) return false;
     const { message } = delivery;
+    const lease = {
+      queueItemId: delivery.queueItemId,
+      leaseToken: delivery.leaseToken,
+    };
     const log = this.logger.child({
       traceId: message.traceId,
       rawEventId: message.rawEventId,
-      attempt: message.attempt,
+      attempt: delivery.deliveryCount,
     });
     let runId: string | null = null;
     try {
@@ -45,7 +49,7 @@ export class EventProcessor {
         rawEventId: rawEvent.id,
         processorName: this.options.processorName,
         processorVersion: this.options.processorVersion,
-        attempt: message.attempt,
+        attempt: delivery.deliveryCount,
         traceId: message.traceId,
       });
       runId = run.id;
@@ -75,14 +79,19 @@ export class EventProcessor {
         action: "processing.succeeded",
         targetType: "raw_event",
         targetId: rawEvent.id,
-        metadata: { canonicalEventIds: savedIds, attempt: message.attempt },
+        metadata: {
+          canonicalEventIds: savedIds,
+          attempt: delivery.deliveryCount,
+        },
         traceId: message.traceId,
       });
       await this.repository.markProcessingSucceeded(
         run.id,
         new Date().toISOString(),
       );
-      await this.queue.ack(delivery.deliveryId);
+      const ackResult = await this.queue.ack(lease);
+      if (ackResult === "stale")
+        log.warn("processing completed after its queue lease expired");
       log.info(
         { canonicalEventIds: savedIds, source: rawEvent.source },
         "event processing succeeded",
@@ -92,7 +101,7 @@ export class EventProcessor {
       const appError = toAppError(error);
       const summary = safeErrorSummary(appError);
       const canRetry =
-        appError.retryable && message.attempt < this.options.maxAttempts;
+        appError.retryable && delivery.deliveryCount < this.options.maxAttempts;
       if (runId !== null) {
         await this.repository.markProcessingFailed(runId, {
           status: canRetry ? "retryable_failed" : "permanently_failed",
@@ -102,15 +111,16 @@ export class EventProcessor {
         });
       }
       if (canRetry) {
-        const nextAttempt = message.attempt + 1;
+        const nextAttempt = delivery.deliveryCount + 1;
         const delayMs = this.retryPolicy.delayMs(nextAttempt);
-        await this.queue.retry(
-          delivery.deliveryId,
-          { ...message, attempt: nextAttempt },
-          delayMs,
-        );
+        const retryResult = await this.queue.retry(lease, message, delayMs);
         log.warn(
-          { errorCode: summary.code, nextAttempt, delayMs },
+          {
+            errorCode: summary.code,
+            nextAttempt,
+            delayMs,
+            queueMutation: retryResult,
+          },
           "event processing scheduled for retry",
         );
       } else {
@@ -124,9 +134,9 @@ export class EventProcessor {
             metadata: { errorCode: summary.code },
             traceId: message.traceId,
           });
-          await this.queue.ack(delivery.deliveryId);
+          const ackResult = await this.queue.ack(lease);
           log.error(
-            { errorCode: summary.code },
+            { errorCode: summary.code, queueMutation: ackResult },
             "orphaned queue message discarded",
           );
           return true;
@@ -135,7 +145,7 @@ export class EventProcessor {
           rawEventId: message.rawEventId,
           processorName: this.options.processorName,
           reason: summary.code,
-          attemptCount: message.attempt,
+          attemptCount: delivery.deliveryCount,
           traceId: message.traceId,
         });
         await this.repository.addAuditEntry({
@@ -144,12 +154,15 @@ export class EventProcessor {
           action: "processing.permanently_failed",
           targetType: "raw_event",
           targetId: message.rawEventId,
-          metadata: { errorCode: summary.code, attempt: message.attempt },
+          metadata: {
+            errorCode: summary.code,
+            attempt: delivery.deliveryCount,
+          },
           traceId: message.traceId,
         });
-        await this.queue.ack(delivery.deliveryId);
+        const ackResult = await this.queue.ack(lease);
         log.error(
-          { errorCode: summary.code },
+          { errorCode: summary.code, queueMutation: ackResult },
           "event processing permanently failed",
         );
       }

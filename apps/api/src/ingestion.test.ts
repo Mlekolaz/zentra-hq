@@ -1,8 +1,13 @@
-import type { WebhookVerifier } from "@zentra/connectors";
-import { InMemoryEventRepository } from "@zentra/database";
+import {
+  WebhookVerifierRegistry,
+  type WebhookVerifier,
+} from "@zentra/connectors";
+import {
+  InMemoryEventIngestion,
+  InMemoryEventRepository,
+} from "@zentra/database";
 import { newTraceId } from "@zentra/domain";
-import { InMemoryQueue } from "@zentra/events";
-import type { RawEventQueueMessage } from "@zentra/events";
+import { InMemoryRawEventQueue } from "@zentra/events";
 import { describe, expect, it } from "vitest";
 import { IngestionService, type IngestionInput } from "./ingestion.js";
 
@@ -13,6 +18,7 @@ const verifier: WebhookVerifier = {
 const fixture = (
   overrides: Partial<IngestionInput["request"]> = {},
 ): IngestionInput => ({
+  trustedSource: "mock",
   request: {
     source: "mock",
     sourceAccountId: "account-1",
@@ -38,11 +44,14 @@ const fixture = (
 
 const setup = () => {
   const repository = new InMemoryEventRepository();
-  const queue = new InMemoryQueue<RawEventQueueMessage>();
+  const queue = new InMemoryRawEventQueue();
+  const ingestion = new InMemoryEventIngestion(repository, queue);
+  const verifiers = new WebhookVerifierRegistry([{ source: "mock", verifier }]);
   return {
     repository,
     queue,
-    service: new IngestionService(repository, queue, verifier),
+    ingestion,
+    service: new IngestionService(ingestion, verifiers),
   };
 };
 
@@ -98,7 +107,6 @@ describe("IngestionService", () => {
     const result = await service.ingest(fixture());
     expect((await queue.receive())?.message).toMatchObject({
       rawEventId: result.rawEventId,
-      attempt: 1,
     });
   });
 
@@ -106,6 +114,51 @@ describe("IngestionService", () => {
     const { queue, service } = setup();
     await service.ingest(fixture());
     await service.ingest(fixture());
+    expect(await queue.depth()).toBe(1);
+  });
+
+  it("deduplicates provider identity when source account is null", async () => {
+    const { repository, service } = setup();
+    const first = await service.ingest(
+      fixture({ sourceAccountId: null, idempotencyKey: null }),
+    );
+    const duplicate = await service.ingest(
+      fixture({ sourceAccountId: null, idempotencyKey: "another-key" }),
+    );
+    expect(duplicate.rawEventId).toBe(first.rawEventId);
+    expect(repository.snapshot().rawEvents).toHaveLength(1);
+  });
+
+  it("recovers a missing queue item when the duplicate arrives", async () => {
+    const { queue, service } = setup();
+    await service.ingest(fixture());
+    const abandoned = await queue.receive();
+    if (abandoned === null) throw new Error("test queue item missing");
+    await queue.ack({
+      queueItemId: abandoned.queueItemId,
+      leaseToken: abandoned.leaseToken,
+    });
+    const duplicate = await service.ingest(fixture());
+    expect(duplicate.queueDisposition).toBe("recovered");
+    expect(await queue.depth()).toBe(1);
+  });
+
+  it("reconciles an older unfinished raw event without active queue work", async () => {
+    const { queue, ingestion, service } = setup();
+    await service.ingest(fixture());
+    const abandoned = await queue.receive();
+    if (abandoned === null) throw new Error("test queue item missing");
+    await queue.ack({
+      queueItemId: abandoned.queueItemId,
+      leaseToken: abandoned.leaseToken,
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 2));
+    expect(
+      await ingestion.reconcileUndispatchedRawEvents({
+        olderThanMs: 0,
+        limit: 10,
+      }),
+    ).toBe(1);
     expect(await queue.depth()).toBe(1);
   });
 

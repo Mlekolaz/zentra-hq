@@ -7,7 +7,11 @@ describe("InMemoryQueue", () => {
     await queue.enqueue({ value: 1 });
     const delivery = await queue.receive();
     expect(delivery?.message).toEqual({ value: 1 });
-    await queue.ack(delivery?.deliveryId ?? "missing");
+    expect(delivery?.deliveryCount).toBe(1);
+    await queue.ack({
+      queueItemId: delivery?.queueItemId ?? "missing",
+      leaseToken: delivery?.leaseToken ?? "missing",
+    });
     expect(await queue.depth()).toBe(0);
   });
 
@@ -16,9 +20,48 @@ describe("InMemoryQueue", () => {
     const queue = new InMemoryQueue<{ attempt: number }>({ now: () => now });
     await queue.enqueue({ attempt: 1 });
     const delivery = await queue.receive();
-    await queue.retry(delivery?.deliveryId ?? "missing", { attempt: 2 }, 50);
+    await queue.retry(
+      {
+        queueItemId: delivery?.queueItemId ?? "missing",
+        leaseToken: delivery?.leaseToken ?? "missing",
+      },
+      { attempt: 2 },
+      50,
+    );
     expect(await queue.receive()).toBeNull();
     now = 150;
-    expect((await queue.receive())?.message.attempt).toBe(2);
+    const redelivery = await queue.receive();
+    expect(redelivery?.message.attempt).toBe(2);
+    expect(redelivery?.deliveryCount).toBe(2);
+  });
+
+  it("rejects an ACK with a stale fencing token", async () => {
+    const queue = new InMemoryQueue<{ value: number }>();
+    await queue.enqueue({ value: 1 });
+    const delivery = await queue.receive();
+    expect(
+      await queue.ack({
+        queueItemId: delivery?.queueItemId ?? "missing",
+        leaseToken: "stale-token",
+      }),
+    ).toBe("stale");
+    expect(await queue.depth()).toBe(1);
+  });
+
+  it("rejects a retry with a stale fencing token", async () => {
+    const queue = new InMemoryQueue<{ value: number }>();
+    await queue.enqueue({ value: 1 });
+    const delivery = await queue.receive();
+    expect(
+      await queue.retry(
+        {
+          queueItemId: delivery?.queueItemId ?? "missing",
+          leaseToken: "stale-token",
+        },
+        { value: 2 },
+        0,
+      ),
+    ).toBe("stale");
+    expect(await queue.depth()).toBe(1);
   });
 });
