@@ -21,7 +21,11 @@ import { InMemoryRawEventQueue } from "@zentra/events";
 import type { RawEventQueuePort } from "@zentra/events";
 import { createLogger } from "@zentra/observability";
 import type { AppConfig } from "@zentra/shared";
-import { DevelopmentIdentityProvider } from "@zentra/shared";
+import {
+  DevelopmentIdentityProvider,
+  ReceiverOnlyIdentityProvider,
+  type IdentityProvider,
+} from "@zentra/shared";
 import {
   EventProcessor,
   ExponentialBackoffPolicy,
@@ -35,7 +39,7 @@ export type Kernel = {
   queue: RawEventQueuePort;
   connectors: ConnectorRegistry;
   verifiers: WebhookVerifierRegistry;
-  identityProvider: DevelopmentIdentityProvider;
+  identityProvider: IdentityProvider;
   workerRuntime: WorkerRuntime | null;
   logger: ReturnType<typeof createLogger>;
   close(): Promise<void>;
@@ -69,7 +73,10 @@ export const createKernel = (config: AppConfig): Kernel => {
     });
   }
   const verifiers = new WebhookVerifierRegistry(verifierRegistrations);
-  const identityProvider = new DevelopmentIdentityProvider(config.NODE_ENV);
+  const identityProvider =
+    config.NODE_ENV === "production"
+      ? new ReceiverOnlyIdentityProvider()
+      : new DevelopmentIdentityProvider(config.NODE_ENV);
   let repository: EventRepository;
   let ingestion: EventIngestionPort;
   let queue: RawEventQueuePort;

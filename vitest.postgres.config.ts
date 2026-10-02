@@ -8,7 +8,10 @@ if (process.env.TEST_DATABASE_URL === undefined) {
 
 export default defineConfig({
   test: {
-    include: ["packages/database/src/**/*.postgres.test.ts"],
+    include: [
+      "packages/database/src/**/*.postgres.test.ts",
+      "apps/api/src/**/*.postgres.test.ts",
+    ],
     fileParallelism: false,
     testTimeout: 15_000,
     hookTimeout: 15_000,

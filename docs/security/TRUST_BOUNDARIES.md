@@ -4,6 +4,8 @@
 
 The browser is untrusted. Request bodies cannot assign actor, role, or admin status. M0 resolves a server-created development identity, guarded against production use. A future identity provider can replace this port without changing route/domain contracts. The browser never receives database service-role or provider credentials.
 
+M1A.3B production is receiver-only: the identity port rejects all operator authentication, and every operator read endpoint resolves identity before accessing data. Signed webhook actors do not grant user access. See [ADR-011](../adr/ADR-011-receiver-only-production-identity.md) and [HQ production runtime](HQ_PRODUCTION_RUNTIME.md).
+
 ## HQ API to HQ database
 
 This is trusted server-side access with validated inputs. Uniqueness constraints, not a select-before-insert convention, are the final idempotency guard. Future workspace/member columns and RLS may add defense in depth; frontend clients still do not perform privileged writes.

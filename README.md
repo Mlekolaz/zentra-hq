@@ -131,6 +131,8 @@ Then set `RUNTIME_MODE=postgres`, `DATABASE_URL` to the local database connectio
 
 ## Tests and quality gates
 
+Receiver-only production runtime, its fail-closed identity boundary, required infrastructure, and local production simulation are documented in [HQ production runtime](docs/security/HQ_PRODUCTION_RUNTIME.md). Production provisioning/deployment is not performed by this repository task.
+
 ```bash
 pnpm lint
 pnpm typecheck

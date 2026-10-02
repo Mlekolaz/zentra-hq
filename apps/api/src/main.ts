@@ -5,10 +5,12 @@ import { safeErrorSummary } from "@zentra/observability";
 import { buildApp } from "./app.js";
 import { createKernel } from "./kernel.js";
 
-loadDotenv({
-  path: resolve(import.meta.dirname, "../../../.env"),
-  quiet: true,
-});
+if (process.env.NODE_ENV !== "production") {
+  loadDotenv({
+    path: resolve(import.meta.dirname, "../../../.env"),
+    quiet: true,
+  });
+}
 const config = loadConfig(process.env);
 const kernel = createKernel(config);
 const app = await buildApp(config, kernel);
@@ -35,7 +37,7 @@ app.addHook("onClose", async () => {
 });
 
 try {
-  await app.listen({ port: config.PORT, host: "127.0.0.1" });
+  await app.listen({ port: config.PORT, host: config.HOST });
 } catch (error: unknown) {
   kernel.logger.fatal(
     { error: safeErrorSummary(error) },

@@ -1,4 +1,4 @@
-import { ConfigurationError } from "@zentra/domain";
+import { AuthenticationError, ConfigurationError } from "@zentra/domain";
 import type { MemberId } from "@zentra/domain";
 
 export type RequestIdentity = {
@@ -13,7 +13,7 @@ export interface IdentityProvider {
 
 export class DevelopmentIdentityProvider implements IdentityProvider {
   public constructor(nodeEnvironment: string) {
-    if (nodeEnvironment === "production") {
+    if (nodeEnvironment !== "development" && nodeEnvironment !== "test") {
       throw new ConfigurationError(
         "Development identity cannot run in production",
       );
@@ -26,5 +26,13 @@ export class DevelopmentIdentityProvider implements IdentityProvider {
       displayName: "Development Operator",
       mode: "development",
     };
+  }
+}
+
+// Receiver-only production has no interactive operator authentication yet.
+// Never fabricate a member or treat webhook authentication as a user session.
+export class ReceiverOnlyIdentityProvider implements IdentityProvider {
+  public async resolve(): Promise<RequestIdentity> {
+    throw new AuthenticationError("Operator authentication is not configured");
   }
 }

@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { ConfigurationError } from "@zentra/domain";
 import { z } from "zod";
 
@@ -11,9 +12,29 @@ const configSchema = z
       .enum(["development", "test", "production"])
       .default("development"),
     RUNTIME_MODE: z.enum(["in-memory", "postgres"]).default("in-memory"),
-    DATABASE_URL: z.string().url().optional(),
+    DATABASE_URL: z
+      .string()
+      .url()
+      .refine(
+        (value) => /^postgres(?:ql)?:\/\//.test(value),
+        "Must be a PostgreSQL connection URL",
+      )
+      .optional(),
     PORT: z.coerce.number().int().min(1).max(65535).default(4100),
-    WEB_ORIGIN: z.string().url().default("http://localhost:5173"),
+    HOST: z
+      .string()
+      .min(1)
+      .max(253)
+      .refine(
+        (value) =>
+          isIP(value) !== 0 ||
+          /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(
+            value,
+          ),
+        "Must be an IP address or hostname",
+      )
+      .optional(),
+    WEB_ORIGIN: z.string().url().optional(),
     LOG_LEVEL: z
       .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
       .default("info"),
@@ -27,6 +48,13 @@ const configSchema = z
     WORKER_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(4),
   })
   .superRefine((config, context) => {
+    if (config.NODE_ENV === "production" && config.WEB_ORIGIN === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["WEB_ORIGIN"],
+        message: "Explicit WEB_ORIGIN is required in production",
+      });
+    }
     if (
       config.RUNTIME_MODE === "postgres" &&
       config.DATABASE_URL === undefined
@@ -81,7 +109,14 @@ const configSchema = z
         message: "In-memory mode requires the embedded development worker",
       });
     }
-  });
+  })
+  .transform((config) => ({
+    ...config,
+    WEB_ORIGIN: config.WEB_ORIGIN ?? "http://localhost:5173",
+    HOST:
+      config.HOST ??
+      (config.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1"),
+  }));
 
 export type AppConfig = z.infer<typeof configSchema>;
 

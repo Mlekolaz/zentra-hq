@@ -14,10 +14,12 @@ import { EventProcessor } from "./event-processor.js";
 import { ExponentialBackoffPolicy } from "./retry-policy.js";
 import { WorkerRuntime } from "./runtime.js";
 
-loadDotenv({
-  path: resolve(import.meta.dirname, "../../../.env"),
-  quiet: true,
-});
+if (process.env.NODE_ENV !== "production") {
+  loadDotenv({
+    path: resolve(import.meta.dirname, "../../../.env"),
+    quiet: true,
+  });
+}
 
 const config = loadConfig(process.env);
 if (config.RUNTIME_MODE !== "postgres" || config.DATABASE_URL === undefined) {

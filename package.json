@@ -13,6 +13,8 @@
     "dev:web": "pnpm --filter @zentra/web dev",
     "dev:api": "pnpm --filter @zentra/api dev",
     "dev:worker": "pnpm --filter @zentra/worker dev",
+    "start:api": "node --import tsx apps/api/src/main.ts",
+    "start:worker": "node --import tsx apps/worker/src/main.ts",
     "demo:zentra-event": "tsx scripts/send-zentra-event.ts",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r typecheck",
@@ -20,6 +22,9 @@
     "test:integration:postgres": "vitest run --config vitest.postgres.config.ts",
     "build": "pnpm -r --if-present build",
     "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "tsx": "^4.20.5"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
@@ -30,7 +35,6 @@
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^16.4.0",
     "prettier": "^3.6.2",
-    "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "typescript-eslint": "^8.44.1",
     "vitest": "^3.2.4"

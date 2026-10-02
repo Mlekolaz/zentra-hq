@@ -79,15 +79,22 @@ export const buildApp = async (config: AppConfig, kernel: Kernel) => {
   app.get("/v1/context", async () => ({
     identity: await kernel.identityProvider.resolve(),
   }));
-  app.get("/v1/overview", async () => kernel.repository.getOverview());
-  app.get("/v1/events", async (request) => {
+  const operatorOnly = {
+    onRequest: async () => {
+      await kernel.identityProvider.resolve();
+    },
+  };
+  app.get("/v1/overview", operatorOnly, async () =>
+    kernel.repository.getOverview(),
+  );
+  app.get("/v1/events", operatorOnly, async (request) => {
     const query = z
       .object({ limit: z.coerce.number().int().min(1).max(200).default(50) })
       .safeParse(request.query);
     if (!query.success) throw new ValidationError("Events query is malformed");
     return { events: await kernel.repository.listEvents(query.data.limit) };
   });
-  app.get("/v1/integrations", async () => ({
+  app.get("/v1/integrations", operatorOnly, async () => ({
     integrations: await Promise.all(
       kernel.connectors.list().map(async (connector) => ({
         provider: connector.provider,
