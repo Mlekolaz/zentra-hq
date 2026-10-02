@@ -18,12 +18,12 @@ Credentials remain server-side. Connector capabilities, health, disable state, p
 
 ## Production Zentra to HQ
 
-Production Zentra will write semantic facts to a transactional outbox and dispatch signed webhooks. HQ has a separate database and does not receive the production Supabase service-role key or broad production-table access merely because it is an internal tool.
+M1A.1 defines and locally proves the signed semantic webhook contract. Production Zentra will write those facts to a transactional outbox and dispatch them in M1A.2. HQ has a separate database and does not receive the production Supabase service-role key or broad production-table access merely because it is an internal tool.
 
 ## External webhooks to HQ
 
-Every provider requires verification before acceptance. M0 preserves exact raw bytes and offers a secret-based development verifier that throws during production construction. Provider-specific HMAC/signature/challenge implementations are intentionally deferred.
+Every provider requires verification before acceptance. The Zentra route selects its provider from routing context, checks a five-minute timestamp window, and verifies HMAC-SHA256 over the timestamp and exact raw bytes before JSON parsing. The development verifier remains unavailable in production.
 
 ## Secrets and logs
 
-Raw event headers use a small allow-list. Authorization, cookies, tokens, API keys, passwords, client secrets, service-role values, and session material are neither persisted nor included in normal structured logs. Unexpected errors return stable safe messages and a trace ID, never a stack trace.
+Raw event headers use a small allow-list. Authorization, cookies, signatures, tokens, API keys, passwords, webhook/client secrets, service-role values, and session material are neither persisted nor included in normal structured logs. Unexpected errors return stable safe messages and a trace ID, never a stack trace.

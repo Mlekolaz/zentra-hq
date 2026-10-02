@@ -22,3 +22,7 @@ The base normalizer does not require `sync()` or write methods. Polling, message
 ## M0
 
 Mock Connector supports `WEBHOOKS` and `READ_MESSAGES`, converts the documented mock payload to `communication.message_received`, and is clearly labeled development-only. No fake Gmail, Stripe, social, billing, or deployment connectors exist.
+
+## M1A.1
+
+Zentra Connector supports only `WEBHOOKS` and normalizes the signed semantic `product.company_created` v1 event. The dedicated route selects the provider independently of the body. See [Zentra Connector](ZENTRA.md) for the transport and HMAC contract.

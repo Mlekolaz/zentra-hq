@@ -1,7 +1,7 @@
 import { AppError } from "@zentra/domain";
 
 const sensitiveKey =
-  /^(authorization|proxy-authorization|cookie|set-cookie|access_?token|refresh_?token|api_?key|apikey|password|secret|service_?role|client_?secret)$/i;
+  /^(authorization|proxy-authorization|cookie|set-cookie|access_?token|refresh_?token|api_?key|apikey|password|secret|webhook_?secret|zentra_?webhook_?secret|signature|x-zentra-signature|service_?role|client_?secret)$/i;
 const serviceRoleLike =
   /(?:service[_-]?role|eyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,})/i;
 

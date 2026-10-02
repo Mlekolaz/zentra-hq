@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import cors from "@fastify/cors";
+import { parseZentraInboundEvent } from "@zentra/connectors";
 import { AppError, AuthenticationError, ValidationError } from "@zentra/domain";
 import { safeErrorSummary } from "@zentra/observability";
 import type { AppConfig } from "@zentra/shared";
@@ -15,6 +16,16 @@ const clientStatusFrom = (error: unknown): number | null => {
   return typeof statusCode === "number" && statusCode >= 400 && statusCode < 500
     ? statusCode
     : null;
+};
+
+const parseJsonBody = (rawBody: Buffer): unknown => {
+  try {
+    return JSON.parse(rawBody.toString("utf8")) as unknown;
+  } catch (error: unknown) {
+    throw new ValidationError("Request body contains malformed JSON", {
+      cause: error,
+    });
+  }
 };
 
 export const buildApp = async (config: AppConfig, kernel: Kernel) => {
@@ -87,16 +98,34 @@ export const buildApp = async (config: AppConfig, kernel: Kernel) => {
     ),
   }));
 
+  if (config.ZENTRA_WEBHOOK_SECRET !== undefined) {
+    app.post("/v1/webhooks/zentra", async (request, reply) => {
+      await ingestion.verify({
+        trustedSource: "zentra",
+        headers: request.headers,
+        rawBody: request.rawBody,
+      });
+      const event = parseZentraInboundEvent(parseJsonBody(request.rawBody));
+      const result = await ingestion.ingestVerified({
+        trustedSource: "zentra",
+        request: {
+          sourceAccountId: null,
+          externalEventId: event.eventId,
+          idempotencyKey: null,
+          eventTypeHint: event.type,
+          occurredAt: event.occurredAt,
+          payload: event,
+        },
+        headers: request.headers,
+        traceId: request.id,
+      });
+      return reply.code(202).send(result);
+    });
+  }
+
   if (config.NODE_ENV !== "production") {
     app.post("/v1/events/ingest", async (request, reply) => {
-      let body: unknown;
-      try {
-        body = JSON.parse(request.rawBody.toString("utf8")) as unknown;
-      } catch (error: unknown) {
-        throw new ValidationError("Request body contains malformed JSON", {
-          cause: error,
-        });
-      }
+      const body = parseJsonBody(request.rawBody);
       const parsed = ingestionRequestSchema.safeParse(body);
       if (!parsed.success) {
         throw new ValidationError("Ingestion request is malformed", {

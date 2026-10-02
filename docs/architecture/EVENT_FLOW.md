@@ -3,7 +3,7 @@
 ```mermaid
 flowchart TD
   S[External source] --> T[Trusted provider from route]
-  T --> V[Webhook verification on raw bytes]
+  T --> V[Timestamp window + HMAC over timestamp.raw bytes]
   V --> I[Parse and validate provider payload]
   I --> X[Postgres transaction]
   X --> R[(Append-only raw_events)]
@@ -23,6 +23,8 @@ flowchart TD
 ## Acceptance
 
 For production provider routes, the API creates a trace ID, derives the provider from trusted routing context, verifies the exact raw bytes, and only then parses provider-specific content. The convenient `/v1/events/ingest` schema-first endpoint is development-only and is not registered in production.
+
+`POST /v1/webhooks/zentra` always selects `zentra` from the route. It validates `x-zentra-timestamp`, verifies `x-zentra-signature` over the timestamp plus exact body bytes, then parses the semantic envelope. A supported but malformed event is rejected with a generic 400. An authenticated, structurally valid but unsupported event type is retained as a raw fact and becomes a permanent processing failure with a dead letter.
 
 In PostgreSQL mode, `raw_events`, `event_queue`, and the ingestion audit entry are written through one pool client and one transaction. Any failure rolls back all three. A duplicate request inspects canonical, successful-processing, permanent-dead-letter, and active-queue state; it restores queue work only when processing is still incomplete. A unique queue constraint prevents two active rows. The worker also runs an idempotent reconciler at startup and every minute for raw rows older than two minutes.
 

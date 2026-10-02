@@ -21,6 +21,7 @@ const configSchema = z
     WEBHOOK_VERIFIER: z
       .enum(["development", "provider"])
       .default("development"),
+    ZENTRA_WEBHOOK_SECRET: z.string().min(32).optional(),
     EMBEDDED_WORKER: booleanString.default(true),
     WORKER_POLL_MS: z.coerce.number().int().min(10).max(60_000).default(100),
     WORKER_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(4),
@@ -54,6 +55,16 @@ const configSchema = z
         code: "custom",
         path: ["WEBHOOK_VERIFIER"],
         message: "Development webhook verification is forbidden in production",
+      });
+    }
+    if (
+      config.WEBHOOK_VERIFIER === "provider" &&
+      config.ZENTRA_WEBHOOK_SECRET === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["ZENTRA_WEBHOOK_SECRET"],
+        message: "Required when provider webhook verification is selected",
       });
     }
     if (config.NODE_ENV === "production" && config.EMBEDDED_WORKER) {

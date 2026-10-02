@@ -59,8 +59,8 @@ export const OverviewPage = () => {
             </div>
             {query.data.recentEvents.length === 0 ? (
               <EmptyState title="No canonical events yet">
-                The development store is empty. Send the mock event from the
-                README to verify the full ingestion flow.
+                The development store is empty. Send the signed Zentra event
+                from the README to verify the full ingestion flow.
               </EmptyState>
             ) : (
               <EventsTable events={query.data.recentEvents} />
@@ -137,7 +137,7 @@ export const IntegrationsPage = () => {
       <PageHeader
         eyebrow="Sources"
         title="Integrations"
-        description="Connector capabilities and runtime health. M0 exposes only the development connector."
+        description="Connector capabilities and runtime health for trusted and development sources."
       />
       {query.isPending && <LoadingState />}
       {query.error !== null && <QueryState error={query.error} />}

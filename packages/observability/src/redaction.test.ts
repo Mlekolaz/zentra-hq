@@ -21,6 +21,18 @@ describe("secret redaction", () => {
     });
   });
 
+  it("redacts Zentra signatures and webhook secrets", () => {
+    expect(
+      redactSensitive({
+        "x-zentra-signature": "sha256=private",
+        ZENTRA_WEBHOOK_SECRET: "private",
+      }),
+    ).toEqual({
+      "x-zentra-signature": "[REDACTED]",
+      ZENTRA_WEBHOOK_SECRET: "[REDACTED]",
+    });
+  });
+
   it("does not retain sensitive headers in raw-event metadata", () => {
     expect(
       sanitizeHeaders({

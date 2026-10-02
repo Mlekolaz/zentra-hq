@@ -3,6 +3,10 @@ import {
   DevelopmentWebhookVerifier,
   MockConnector,
   WebhookVerifierRegistry,
+  ZentraConnector,
+  ZentraWebhookVerifier,
+  type Connector,
+  type WebhookVerifierRegistration,
 } from "@zentra/connectors";
 import {
   InMemoryEventIngestion,
@@ -42,17 +46,29 @@ export const createKernel = (config: AppConfig): Kernel => {
     service: "zentra-api",
     runtimeMode: config.RUNTIME_MODE,
   });
-  const connectors = new ConnectorRegistry([new MockConnector()]);
-  if (config.WEBHOOK_VERIFIER !== "development") {
-    throw new ConfigurationError(
-      "No production webhook verifier is configured in M0",
-    );
+  const connectorList: Connector[] = [
+    new ZentraConnector(config.ZENTRA_WEBHOOK_SECRET !== undefined),
+  ];
+  if (config.NODE_ENV !== "production") connectorList.push(new MockConnector());
+  const connectors = new ConnectorRegistry(connectorList);
+
+  const verifierRegistrations: WebhookVerifierRegistration[] = [];
+  if (config.WEBHOOK_VERIFIER === "development") {
+    verifierRegistrations.push({
+      source: "mock",
+      verifier: new DevelopmentWebhookVerifier(
+        config.WEBHOOK_DEV_SECRET,
+        config.NODE_ENV,
+      ),
+    });
   }
-  const verifier = new DevelopmentWebhookVerifier(
-    config.WEBHOOK_DEV_SECRET,
-    config.NODE_ENV,
-  );
-  const verifiers = new WebhookVerifierRegistry([{ source: "mock", verifier }]);
+  if (config.ZENTRA_WEBHOOK_SECRET !== undefined) {
+    verifierRegistrations.push({
+      source: "zentra",
+      verifier: new ZentraWebhookVerifier(config.ZENTRA_WEBHOOK_SECRET),
+    });
+  }
+  const verifiers = new WebhookVerifierRegistry(verifierRegistrations);
   const identityProvider = new DevelopmentIdentityProvider(config.NODE_ENV);
   let repository: EventRepository;
   let ingestion: EventIngestionPort;

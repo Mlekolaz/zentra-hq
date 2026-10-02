@@ -4,9 +4,9 @@
 
 Zentra HQ is the internal, event-driven attention management system for Moja Zentra. It is designed to turn a noisy stream of provider and product facts into a small, explainable set of things that require human attention. It is not a generic CRM, an analytics dashboard, or a privileged window into the production Zentra database.
 
-## M0 scope
+## Implemented foundation
 
-M0 establishes the testable spine of the system:
+M0 and M0.1 establish the testable spine of the system:
 
 - React command-center shell with live Overview, Events, and Integrations views;
 - Fastify ingestion and read API;
@@ -20,6 +20,11 @@ M0 establishes the testable spine of the system:
 - deterministic policy/action/approval foundation;
 - Zod boundary validation, structured logs, secret redaction, typed configuration, and development auth boundaries;
 - SQL migrations and architecture records.
+
+M1A.1 adds:
+
+- trusted Zentra semantic event channel with timestamped HMAC-SHA256 verification;
+- `product.company_created` normalization through the real Zentra Connector.
 
 ## Future vision
 
@@ -78,7 +83,7 @@ docs/            architecture, ADRs, security, event and connector conventions
 - pnpm 10 or newer (verified on pnpm 11)
 - optional: Docker and Supabase CLI for persistent Postgres mode
 
-No cloud account or production credential is required for M0.
+No cloud account or production credential is required for the local M1A.1 contract demo.
 
 ## Local development
 
@@ -111,7 +116,7 @@ Copy-Item .env.example .env
 cp .env.example .env
 ```
 
-Never place real credentials in Vite variables. `VITE_API_BASE_URL` may contain only the public API origin. Production config fails unless Postgres and a non-development verifier are selected; M0 intentionally does not ship a production provider verifier.
+Never place real credentials in Vite variables. `VITE_API_BASE_URL` may contain only the public API origin. `ZENTRA_WEBHOOK_SECRET` is server-side only and must contain at least 32 characters. Selecting provider webhook verification without that secret fails during configuration loading.
 
 ### Persistent Postgres mode
 
@@ -142,23 +147,32 @@ TEST_DATABASE_URL=postgresql://... pnpm test:integration:postgres
 
 The integration command intentionally fails with a clear message when `TEST_DATABASE_URL` is absent; it never reports a skipped database suite as passed. Use an isolated test database because the suite creates and drops its own `zentra_m0_1_integration` schema.
 
-## Manual event flow demo
+## Trusted Zentra event demo
 
-1. Start the default local stack with `pnpm dev`.
-2. Send the development event:
+Terminal 1 generates a local secret, copies it to the clipboard, and starts HQ:
 
-```bash
-curl -i http://localhost:4100/v1/events/ingest \
-  -H "content-type: application/json" \
-  -H "x-zentra-webhook-secret: local-development-only" \
-  --data '{"source":"mock","sourceAccountId":"demo","externalEventId":"mock-123","idempotencyKey":"demo-mock-123","eventTypeHint":"message","occurredAt":"2026-09-29T08:00:00.000Z","payload":{"kind":"message","messageId":"mock-123","sender":{"name":"Jan Kowalski","email":"jan@example.com"},"text":"Chciałbym dowiedzieć się więcej o Zentrze."}}'
+```powershell
+$bytes = [byte[]]::new(32)
+[Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+$env:ZENTRA_WEBHOOK_SECRET = [Convert]::ToHexString($bytes).ToLowerInvariant()
+$env:ZENTRA_WEBHOOK_SECRET | Set-Clipboard
+pnpm dev
 ```
 
-On Windows PowerShell, use `curl.exe` with the same arguments. The API returns `202` immediately after durable acceptance and enqueue; normalization remains asynchronous.
+Terminal 2 reads the same secret and sends the stable demo event:
 
-3. Open `http://localhost:5173/events`. The canonical `communication.message_received` event appears after the worker poll.
-4. Send the same command again. The response has `"duplicate": true`, the same `rawEventId`, and no second canonical event.
-5. Inspect `http://localhost:4100/health` for actual storage, queue, and embedded-worker readiness.
+```powershell
+$env:ZENTRA_WEBHOOK_SECRET = Get-Clipboard
+$env:HQ_URL = "http://127.0.0.1:4100"
+pnpm demo:zentra-event
+pnpm demo:zentra-event
+```
+
+The first response contains `"duplicate":false`; the second contains `"duplicate":true`. Open `http://localhost:5173/events` to see the single canonical `product.company_created` event. To choose an explicit stable source ID:
+
+```powershell
+pnpm demo:zentra-event -- --event-id 20000000-0000-4000-8000-000000000001
+```
 
 In-memory state is intentionally lost when the API restarts and must never be treated as production persistence.
 
@@ -187,9 +201,9 @@ See [Trust Boundaries](docs/security/TRUST_BOUNDARIES.md).
 
 ## Current limitations
 
-- only Mock Connector exists;
+- Zentra Connector currently supports only `product.company_created` schema version 1;
+- production Zentra is not connected; M1A.1 uses only the local signed producer simulator;
 - no full user authentication or authorization provider exists;
-- no production webhook verifier exists, so production startup intentionally fails closed;
 - in-memory mode is process-local and ephemeral;
 - Postgres mode uses a simple M0 polling queue, not PGMQ;
 - no action executor, AI runtime, real connector, entity resolution, attention engine, CRM, task engine, or search exists.

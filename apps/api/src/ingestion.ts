@@ -15,6 +15,7 @@ export const ingestionRequestSchema = z
   })
   .strict();
 export type IngestionRequest = z.infer<typeof ingestionRequestSchema>;
+export type VerifiedIngestionRequest = Omit<IngestionRequest, "source">;
 
 export type IngestionInput = {
   trustedSource: string;
@@ -32,13 +33,26 @@ export type IngestionResult = {
   queueDisposition: QueueDisposition;
 };
 
+export type WebhookVerificationRequest = {
+  trustedSource: string;
+  headers: Readonly<Record<string, string | string[] | undefined>>;
+  rawBody: Buffer;
+};
+
+export type VerifiedIngestionInput = {
+  trustedSource: string;
+  request: VerifiedIngestionRequest;
+  headers: Readonly<Record<string, string | string[] | undefined>>;
+  traceId: string;
+};
+
 export class IngestionService {
   public constructor(
     private readonly ingestion: EventIngestionPort,
     private readonly verifiers: WebhookVerifierRegistry,
   ) {}
 
-  public async ingest(input: IngestionInput): Promise<IngestionResult> {
+  public async verify(input: WebhookVerificationRequest): Promise<void> {
     const normalizedHeaders = Object.fromEntries(
       Object.entries(input.headers).map(([key, value]) => [
         key.toLowerCase(),
@@ -49,6 +63,16 @@ export class IngestionService {
       headers: normalizedHeaders,
       rawBody: input.rawBody,
     });
+  }
+
+  public async ingest(input: IngestionInput): Promise<IngestionResult> {
+    await this.verify(input);
+    return this.ingestVerified(input);
+  }
+
+  public async ingestVerified(
+    input: VerifiedIngestionInput,
+  ): Promise<IngestionResult> {
     const receivedAt = new Date().toISOString();
     const result = await this.ingestion.ingestEventAtomically({
       source: input.trustedSource,

@@ -1,5 +1,10 @@
 import { resolve } from "node:path";
-import { ConnectorRegistry, MockConnector } from "@zentra/connectors";
+import {
+  ConnectorRegistry,
+  MockConnector,
+  ZentraConnector,
+  type Connector,
+} from "@zentra/connectors";
 import { PostgresEventRepository, PostgresQueue } from "@zentra/database";
 import { createLogger, safeErrorSummary } from "@zentra/observability";
 import { loadConfig } from "@zentra/shared";
@@ -30,10 +35,14 @@ const queue = new PostgresQueue(pool, {
   maxDeliveries: config.WORKER_MAX_ATTEMPTS,
   processorName: "canonical-normalizer",
 });
+const connectorList: Connector[] = [
+  new ZentraConnector(config.ZENTRA_WEBHOOK_SECRET !== undefined),
+];
+if (config.NODE_ENV !== "production") connectorList.push(new MockConnector());
 const processor = new EventProcessor(
   repository,
   queue,
-  new ConnectorRegistry([new MockConnector()]),
+  new ConnectorRegistry(connectorList),
   new ExponentialBackoffPolicy(),
   logger,
   {
