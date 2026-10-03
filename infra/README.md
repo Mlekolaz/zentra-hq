@@ -8,8 +8,9 @@ No production action below is authorized by a successful local test.
 Build from the workspace root: `docker build -t zentra-hq-preflight:local .`.
 Node 24, pinned pnpm 11.25.0, frozen production dependencies, workspace TS sources.
 No compilation is required. `tsx` is a runtime dependency, not a development tool.
-The optional BuildKit `npm_ca` secret is a trusted corporate CA for installation
-only; it is not an application secret and never persists in an image layer.
+Registry installation uses standard verified TLS and requires no custom CA or
+build secrets. The Dockerfile has no secret mounts (unsupported by Railway).
+The bundled Supabase Root CA is for runtime database TLS only, not npm installation.
 
 Same image, two services, one replica each initially:
 
