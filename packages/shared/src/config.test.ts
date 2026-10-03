@@ -12,6 +12,17 @@ const productionEnvironment = {
 };
 
 describe("environment configuration", () => {
+  it("preserves an explicit public database CA path and rejects empty values", () => {
+    expect(
+      loadConfig({
+        ...productionEnvironment,
+        DATABASE_CA_CERT_PATH: "/run/database-ca.crt",
+      }).DATABASE_CA_CERT_PATH,
+    ).toBe("/run/database-ca.crt");
+    expect(() =>
+      loadConfig({ ...productionEnvironment, DATABASE_CA_CERT_PATH: "" }),
+    ).toThrow("Environment configuration is invalid");
+  });
   it("fails fast for invalid values", () => {
     expect(() => loadConfig({ PORT: "99999" })).toThrow(
       "Environment configuration is invalid",

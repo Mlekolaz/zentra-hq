@@ -3,6 +3,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import pg from "pg";
+import { postgresPoolConfig } from "@zentra/database";
+import { localPostgresTls } from "./local-postgres-tls.js";
 import {
   migrationInvocation,
   runMigrationCommand,
@@ -28,9 +30,11 @@ export const localDatabaseFixture = async (usePsqlRunner = false) => {
   let owner: pg.Pool | undefined;
   let api: pg.Pool | undefined;
   let worker: pg.Pool | undefined;
+  let tls: Awaited<ReturnType<typeof localPostgresTls>> | undefined;
   const cleanup = async () => {
     try {
       await Promise.all([api?.end(), worker?.end(), owner?.end()]);
+      await tls?.cleanup();
       if (databaseCreated) await admin.query(`DROP DATABASE ${database}`);
       if (rolesCreated) await admin.query("DROP ROLE hq_api, hq_worker");
     } finally {
@@ -128,9 +132,39 @@ export const localDatabaseFixture = async (usePsqlRunner = false) => {
     };
     const apiUrl = runtimeUrl("hq_api", apiPassword);
     const workerUrl = runtimeUrl("hq_worker", workerPassword);
-    api = new pg.Pool({ connectionString: apiUrl });
-    worker = new pg.Pool({ connectionString: workerUrl });
-    return { owner, api, worker, apiUrl, workerUrl, database, cleanup };
+    tls = await localPostgresTls(input, usePsqlRunner);
+    const apiTlsUrl = tls.url(apiUrl);
+    const workerTlsUrl = tls.url(workerUrl);
+    api = new pg.Pool(
+      postgresPoolConfig(
+        {
+          NODE_ENV: "production",
+          DATABASE_URL: apiTlsUrl,
+          DATABASE_CA_CERT_PATH: tls.caPath,
+        },
+        5,
+      ),
+    );
+    worker = new pg.Pool(
+      postgresPoolConfig(
+        {
+          NODE_ENV: "production",
+          DATABASE_URL: workerTlsUrl,
+          DATABASE_CA_CERT_PATH: tls.caPath,
+        },
+        5,
+      ),
+    );
+    return {
+      owner,
+      api,
+      worker,
+      apiUrl: apiTlsUrl,
+      workerUrl: workerTlsUrl,
+      tls,
+      database,
+      cleanup,
+    };
   } catch (error: unknown) {
     await cleanup();
     throw error;

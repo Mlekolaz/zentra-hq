@@ -7,6 +7,7 @@ import { createZentraWebhookSignature } from "@zentra/connectors";
 import pg from "pg";
 import { expect, it } from "vitest";
 import { z } from "zod";
+import { localPostgresTls } from "./ops/local-postgres-tls.js";
 
 const pause = async () => new Promise<void>((done) => setTimeout(done, 100));
 const waitFor = async (condition: () => Promise<boolean>) => {
@@ -163,11 +164,13 @@ it("runs the real production API and standalone worker against local Postgres", 
   const secret = randomBytes(32).toString("hex");
   const port = await unusedPort();
   const baseUrl = `http://127.0.0.1:${port}`;
+  const tls = await localPostgresTls(databaseUrl.toString());
   const environment: NodeJS.ProcessEnv = {
     ...process.env,
     NODE_ENV: "production",
     RUNTIME_MODE: "postgres",
-    DATABASE_URL: databaseUrl.toString(),
+    DATABASE_URL: tls.url(databaseUrl.toString()),
+    DATABASE_CA_CERT_PATH: tls.caPath,
     WEBHOOK_VERIFIER: "provider",
     ZENTRA_WEBHOOK_SECRET: secret,
     EMBEDDED_WORKER: "false",
@@ -341,6 +344,7 @@ it("runs the real production API and standalone worker against local Postgres", 
   } finally {
     try {
       await Promise.all([worker?.stop(), api?.stop()]);
+      await tls.cleanup();
     } finally {
       try {
         if (schemaCreated) await pool.query(`DROP SCHEMA ${schema} CASCADE`);

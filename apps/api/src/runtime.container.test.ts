@@ -70,6 +70,7 @@ it("runs the final Linux production-only image as separate non-root API/worker w
     WORKER_POLL_MS: "25",
     LOG_LEVEL: "info",
     DATABASE_URL: inContainer(fixture.apiUrl),
+    DATABASE_CA_CERT_PATH: "/run/hq-local-ca.crt",
   };
   const names = [
     "NODE_ENV",
@@ -83,6 +84,7 @@ it("runs the final Linux production-only image as separate non-root API/worker w
     "WORKER_POLL_MS",
     "LOG_LEVEL",
     "DATABASE_URL",
+    "DATABASE_CA_CERT_PATH",
   ];
   const envArgs = names.flatMap((name) => ["--env", name]);
   const run = async (
@@ -98,6 +100,8 @@ it("runs the final Linux production-only image as separate non-root API/worker w
         name,
         "--label",
         `zentra.hq.preflight=${suffix}`,
+        "--mount",
+        `type=bind,src=${fixture.tls.caPath},dst=/run/hq-local-ca.crt,readonly`,
         ...envArgs,
         ...extra,
         image,
@@ -232,6 +236,9 @@ it("runs the final Linux production-only image as separate non-root API/worker w
           "-e",
           `
         import { createRequire } from 'node:module'; import { readdirSync, readFileSync } from 'node:fs';
+        import { X509Certificate } from 'node:crypto';
+        const ca = new X509Certificate(readFileSync('/app/packages/database/certs/supabase-root-2021.crt'));
+        if(ca.fingerprint256 !== '80:70:25:AD:50:D4:ED:21:9D:2C:9C:7D:29:9C:00:4F:82:4E:B0:0C:F7:F6:5A:FE:F6:07:D0:7B:72:E6:CA:FA') throw new Error('Bundled public Root CA mismatch');
         const req = createRequire('/app/package.json');
         for (const name of ['typescript','vitest','eslint','@types/node']) {
           try { req.resolve(name+'/package.json'); throw new Error('Developer dependency present'); }

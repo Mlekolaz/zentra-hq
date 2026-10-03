@@ -29,6 +29,39 @@ afterEach(async () => {
 
 describe("production receiver bootstrap", () => {
   it.each(["apps/api/src/main.ts", "apps/worker/src/main.ts"])(
+    "fails before starting %s when required CA is absent",
+    (entrypoint) => {
+      const result = spawnSync(
+        process.execPath,
+        ["--import", "tsx", entrypoint],
+        {
+          env: {
+            ...process.env,
+            NODE_ENV: "production",
+            RUNTIME_MODE: "postgres",
+            DATABASE_URL:
+              "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+            DATABASE_CA_CERT_PATH: "missing-public-ca.crt",
+            WEBHOOK_VERIFIER: "provider",
+            EMBEDDED_WORKER: "false",
+            ZENTRA_WEBHOOK_SECRET:
+              "local-test-secret-with-at-least-32-characters",
+            WEB_ORIGIN: "http://127.0.0.1:5173",
+          },
+          encoding: "utf8",
+          timeout: 10_000,
+        },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "Database TLS Root CA is missing, invalid or expired",
+      );
+      expect(result.stderr).not.toContain("postgresql://postgres:postgres@");
+    },
+    15_000,
+  );
+  it.each(["apps/api/src/main.ts", "apps/worker/src/main.ts"])(
     "fails before starting %s when WEB_ORIGIN is absent",
     (entrypoint) => {
       const result = spawnSync(

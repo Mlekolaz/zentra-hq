@@ -78,6 +78,7 @@ beforeAll(async () => {
     NODE_ENV: "production",
     RUNTIME_MODE: "postgres",
     DATABASE_URL: fixture.apiUrl,
+    DATABASE_CA_CERT_PATH: fixture.tls.caPath,
     WEBHOOK_VERIFIER: "provider",
     ZENTRA_WEBHOOK_SECRET: secret,
     EMBEDDED_WORKER: "false",

@@ -13,6 +13,7 @@ import {
   InMemoryEventRepository,
   PostgresEventRepository,
   PostgresQueue,
+  postgresPoolConfig,
   type EventIngestionPort,
   type EventRepository,
 } from "@zentra/database";
@@ -85,10 +86,7 @@ export const createKernel = (config: AppConfig): Kernel => {
   if (config.RUNTIME_MODE === "postgres") {
     if (config.DATABASE_URL === undefined)
       throw new ConfigurationError("DATABASE_URL is required");
-    const pool = new pg.Pool({
-      connectionString: config.DATABASE_URL,
-      max: 10,
-    });
+    const pool = new pg.Pool(postgresPoolConfig(config, 10));
     const postgresRepository = new PostgresEventRepository(pool);
     repository = postgresRepository;
     ingestion = postgresRepository;

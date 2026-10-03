@@ -21,6 +21,7 @@ const configSchema = z
       )
       .optional(),
     PORT: z.coerce.number().int().min(1).max(65535).default(4100),
+    DATABASE_CA_CERT_PATH: z.string().min(1).optional(),
     HOST: z
       .string()
       .min(1)

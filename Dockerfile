@@ -15,6 +15,7 @@ RUN --mount=type=secret,id=npm_ca \
     pnpm install --prod --frozen-lockfile && pnpm store prune
 
 ENV NODE_ENV=production
+ENV DATABASE_CA_CERT_PATH=/app/packages/database/certs/supabase-root-2021.crt
 USER node
 # Exec-form Node is PID 1. No pnpm/shell intermediary swallows SIGTERM.
 # Worker service overrides CMD with: node --import tsx apps/worker/src/main.ts

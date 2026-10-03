@@ -32,6 +32,55 @@ API also uses `HOST` and provider-assigned `PORT`; worker ignores them.
 Worker defaults: poll 100 ms, max attempts 4, lease 5 min, reconciliation each
 minute for raw events older than 2 minutes, heartbeat each 30 seconds.
 
+## Production database connectivity: direct IPv6 + verified TLS
+
+Approved HQ project: `fxmssbnkmelaokttznqw`, PostgreSQL 17.11. Both persistent
+services use **direct** `db.fxmssbnkmelaokttznqw.supabase.co:5432`, database
+`postgres`. API authenticates as `hq_api`, worker as `hq_worker` (plain role
+names, no pooler project suffix). Keep the existing verified runtime roles and
+passwords; do not recreate roles or reset passwords as a connectivity workaround.
+HQ remains separate from Zentra, with Data API OFF and scheduled backups enabled.
+No Zentra service-role credential is required or accepted.
+
+`DATABASE_URL` remains the only endpoint/credential source, with URL-encoded
+passwords prepared privately in the approved secret manager. Never put a complete
+production URL in argv, repository files, screenshots or logs. Do not append
+`sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `ssl`, `uselibpqcompat` or other TLS
+parameters. Only `options` and `application_name` query parameters are accepted
+in production. Shared Supavisor `.pooler.supabase.com` URLs are refused; neither
+session 5432 nor transaction 6543 is a fallback after EAUTHQUERY/network/TLS errors.
+
+API and worker share one Pool configuration (max 10 and 5 respectively), which
+parses the URL into explicit fields and **never passes connectionString in
+production**. TLS has one authority: the programmatic object with the bundled
+Supabase public Root CA, `rejectUnauthorized: true`, minimum TLS 1.2, DNS SNI and
+certificate hostname verification bound to DATABASE_URL. This avoids the
+[node-postgres URL SSL override](https://node-postgres.com/features/ssl).
+Missing/unreadable/invalid/expired CA, invalid URL, competing URL configuration
+or `NODE_TLS_REJECT_UNAUTHORIZED=0` abort bootstrap before listening/processing.
+There is no plaintext, system-root or insecure-verification fallback, including
+for loopback production simulations. An untrusted chain or mismatched hostname
+fails the handshake; the client does not downgrade or retry a pooler endpoint.
+
+The image sets `DATABASE_CA_CERT_PATH=/app/packages/database/certs/supabase-root-2021.crt`.
+Outside Docker the factory resolves that bundled file relative to its module.
+This is a public file, not a secret. An optional explicit path supports a reviewed
+CA rotation/mount; the selected root must exist and be valid. See
+`packages/database/certs/README.md` for public provenance, fingerprint and expiry.
+`PGSSLMODE`/`PGHOST` must not be used to configure runtime: explicit URL fields
+and TLS policy are authoritative. They do not override the programmatic settings.
+
+**Railway Outbound IPv6 REQUIRED, separately for API and worker.** In each
+service's Settings > Networking stage Enable Outbound IPv6 before its first
+approved deployment. It is disabled by default; applying the staged change
+redeploys the service and therefore requires an operator deployment gate. See
+[Railway outbound networking](https://docs.railway.com/networking/outbound-networking#outbound-ipv6).
+Do not use the private-network IPv6 setting as a substitute. Keep the direct DNS
+hostname (do not pin an IPv6 literal or force IPv4), so SNI/hostname verification
+and future address changes remain correct. No code-level network probe contacts
+production during pre-flight; actual Railway routing/handshake remains an
+explicitly approved later verification. Do not broaden database grants to fix TLS.
+
 ## Operator-only migrations
 
 Requires a local checkout with full operator tooling and `psql` installed. The
@@ -105,6 +154,17 @@ Do not broaden runtime grants to make an operator UI work in this milestone.
 
 With local Supabase PostgreSQL on `127.0.0.1:54322` and `TEST_DATABASE_URL` set
 locally (never production), run `pnpm test:integration:postgres`.
+Development/test defaults still connect to the local plaintext database.
+Production simulations use an ephemeral local PostgreSQL SSLRequest/TLS test
+endpoint forwarding only to `127.0.0.1:54322`. It generates a one-day local test
+CA/key outside the checkout (OpenSSL; Windows Git includes the binary), trusts
+only that CA, and removes the generated files and sockets after tests. This
+test-only adapter is excluded from the image; it is not a production TLS proxy.
+Tests reject untrusted CA, incorrect hostname and a plaintext server. The local
+Postgres configuration is not changed. The container test mounts only the public
+test CA read-only, never the test private key; the image's actual Supabase root
+is independently checked. These tests cannot prove the live provider's current
+certificate chain or Railway routing without a separately approved connection.
 After the local image build, set `HQ_TEST_IMAGE=zentra-hq-preflight:local` and run
 `pnpm test:container`. The container test applies verified migrations through
 the real psql runner, then role SQL; starts separate non-root containers with
@@ -187,7 +247,10 @@ schema or replay requires a separate reviewed procedure and a verified backup.
 
 ## Provisioning boundary
 
-First production action remains manual: after explicit approval, create the
-dedicated HQ PostgreSQL project/database with agreed region and backup policy.
-Do not run migrations, create services, set secrets, start workloads, change DNS,
-or send smoke requests as part of that first gate.
+The dedicated HQ project and least-privilege runtime roles have already been
+provisioned and verified by the operator. Earlier fresh-database bootstrap steps
+are historical procedures, not instructions to rerun migrations/roles/passwords.
+Next: review the local direct/TLS image and configuration changes. After separate
+explicit approval, stage Outbound IPv6 on both Railway services before their
+first deployment. Do not apply staged changes, configure secrets, deploy, change
+DNS or send a production request during this local readiness stage.

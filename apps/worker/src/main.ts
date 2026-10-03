@@ -5,7 +5,11 @@ import {
   ZentraConnector,
   type Connector,
 } from "@zentra/connectors";
-import { PostgresEventRepository, PostgresQueue } from "@zentra/database";
+import {
+  PostgresEventRepository,
+  PostgresQueue,
+  postgresPoolConfig,
+} from "@zentra/database";
 import { createLogger, safeErrorSummary } from "@zentra/observability";
 import { loadConfig } from "@zentra/shared";
 import { config as loadDotenv } from "dotenv";
@@ -30,7 +34,7 @@ if (config.RUNTIME_MODE !== "postgres" || config.DATABASE_URL === undefined) {
 const logger = createLogger(config.LOG_LEVEL).child({
   service: "zentra-worker",
 });
-const pool = new pg.Pool({ connectionString: config.DATABASE_URL, max: 5 });
+const pool = new pg.Pool(postgresPoolConfig(config, 5));
 const repository = new PostgresEventRepository(pool);
 const queue = new PostgresQueue(pool, {
   leaseTimeoutMs: 5 * 60_000,
