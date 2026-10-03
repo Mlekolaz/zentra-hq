@@ -1,0 +1,13 @@
+{
+  "normalization": "UTF-8 with CRLF normalized to LF",
+  "migrations": [
+    {
+      "file": "202609290001_m0_foundation.sql",
+      "sha256": "814786e9abf771d415f002dd0fd66bd24008797deb544a09f34f5e289a82a9ce"
+    },
+    {
+      "file": "202609300001_m0_1_data_integrity.sql",
+      "sha256": "a3e43c3df410a67b4bfdb7b722da1d12d64bed38d95f7b92a3e542d786998518"
+    }
+  ]
+}

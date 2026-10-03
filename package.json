@@ -16,10 +16,13 @@
     "start:api": "node --import tsx apps/api/src/main.ts",
     "start:worker": "node --import tsx apps/worker/src/main.ts",
     "demo:zentra-event": "tsx scripts/send-zentra-event.ts",
+    "ops:migrate": "node --import tsx scripts/migrate-hq.ts",
+    "ops:smoke": "node --import tsx scripts/smoke-hq-receiver.ts",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r typecheck",
     "test": "vitest run",
     "test:integration:postgres": "vitest run --config vitest.postgres.config.ts",
+    "test:container": "vitest run --config vitest.container.config.ts",
     "build": "pnpm -r --if-present build",
     "format:check": "prettier --check ."
   },
